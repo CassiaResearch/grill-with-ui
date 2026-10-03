@@ -66,7 +66,8 @@ What the agent needs at run time:
   finishes or explicitly pauses; a running server is not a substitute for that listener.
 - **Optionally a subagent tool**, for Visualize. With one, the visual is drawn in the
   background while you keep answering. Without one, the agent draws it inline and that
-  turn takes longer.
+  turn takes longer. The same subagent draws figures (below); without one, the grill runs
+  with no figures.
 
 ## Use
 
@@ -103,6 +104,17 @@ Visualizing… (or the strip says regenerating…) until the new version lands. 
 reconciles and copies the final visual next to the design doc as
 `docs/<topic>-visual.html`.
 
+### Figures on questions
+
+Where a picture helps, a question carries a **figure** and each option carries its own, shown
+under the written options and side by side so the options compare. The written text is always
+complete without them. The rule: a question about a screen, a layout, or a flow you click
+through gets a **mockup per option**; one about architecture, data flow, a sequence, or states
+gets a **diagram**; one about policy, naming, or wording gets none. A figure never holds up the
+interview: the question shows at once with "Drawing the figure…", and a subagent (rules in
+`figure-brief.md`) fills it in a moment later. Each figure sits in a sandboxed frame that
+follows your system theme and fits a phone width; **Open larger** shows it full size.
+
 **Finish grill** sends at once (after an inline confirm), together with anything you had
 staged; the agent writes the design doc to the path shown in the header (default
 `docs/<topic>-design.md` in your project) and stops.
@@ -126,13 +138,14 @@ Session state lives outside your repo, so there is nothing to gitignore:
   events.jsonl   appended only by the page, one line per Send
   server.json    url, port and pid of the running server
   visual.html    the prototype or diagram, drawn by the agent's subagent, served at /visual
+  figures/       one file per question or option figure, drawn by a subagent, served at /figure/<name>
 ```
 
 `<project-key>` is the git common root of the project with slashes turned into dashes, so
 every worktree of a repo sees the same sessions; outside git it is the working directory.
 
 In this repo: `server.mjs` (the server and CLI), `page.html` (the page), `SKILL.md` (the
-prompt the agent follows), `test/`, and `design/` + `docs/design.md` (how it was designed).
+prompt the agent follows), `visual-brief.md` and `figure-brief.md` (the subagents' rules), `test/`, and `design/` + `docs/design.md` (how it was designed).
 `design/record-demo.mjs` re-records the GIF above by driving the real page; it needs
 Playwright and `ffmpeg`.
 
