@@ -86,6 +86,25 @@
   #explore { font-size: 13px; padding: 6px 12px; flex-shrink: 0; }
   #explore:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
   .card .body { font-size: 15px; color: var(--ink-2); max-width: 62ch; margin: 0; white-space: pre-line; }
+  /* figures: a diagram on a question, a mockup or diagram per option. Each is a sandboxed iframe
+     (scripts run, no same-origin access); the card widens a little when it holds figures. */
+  .card.has-figs { max-width: 940px; }
+  .fig-q { margin: 20px 0 0; }
+  .figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 18px 0 0; }
+  .fig { margin: 0; min-width: 0; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); overflow: hidden; }
+  .fig.rec { border-color: var(--accent); } .fig.chosen { border-color: var(--ok); }
+  .fig figcaption { display: flex; align-items: baseline; gap: 8px; padding: 7px 12px; font-size: 12px; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
+  .fig figcaption .k { font-family: var(--serif); font-size: 16px; color: var(--ink-3); } .fig.rec figcaption .k { color: var(--accent); }
+  .fig figcaption .tag { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .fig figcaption .alt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fig-open { margin-left: auto; font: inherit; font-size: 12px; padding: 2px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); color: var(--accent); cursor: pointer; }
+  .fig-frame iframe { display: block; width: 100%; border: 0; background: #fff; }
+  .fig-wait { display: flex; align-items: center; gap: 10px; padding: 26px 14px; font-size: 13px; color: var(--ink-3); }
+  #fig-dialog { width: min(96vw, 1200px); height: 90vh; max-width: none; padding: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); color: var(--ink); }
+  #fig-dialog[open] { display: grid; grid-template-rows: auto 1fr; }
+  #fig-dialog::backdrop { background: rgba(31, 28, 24, .55); }
+  #fig-dialog .bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--rule); font-size: 13px; }
+  #fig-dialog iframe { width: 100%; height: 100%; border: 0; background: #fff; }
   .opts { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 8px; }
   .opt { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); cursor: pointer; }
   .opt .check { width: 20px; height: 20px; color: var(--ok); visibility: hidden; align-self: center; }
@@ -227,6 +246,7 @@
 </header>
 <nav id="nav"><div class="empty">Connecting…</div></nav>
 <main id="main"></main>
+<dialog id="fig-dialog" aria-label="Figure, larger"><div class="bar"><b id="fig-dialog-title"></b><button type="button" id="fig-dialog-close" style="margin-left:auto">Close</button></div><iframe id="fig-dialog-frame" title="Figure, larger" sandbox="allow-scripts"></iframe></dialog>
 <section id="visual"><div id="visual-strip"></div><div id="visual-wait" hidden><span class="spin"></span>Drawing the first version…</div><iframe id="visual-frame" title="Visual" sandbox="allow-scripts"></iframe></section>
 <aside id="aside"></aside>
 <footer>
@@ -505,6 +525,47 @@ function renderNav() {
   }
   const sel = nav.querySelector(".item.selected"); if (sel) sel.scrollIntoView({ block: "nearest" });
 }
+// ---- figures ----
+// A question's figure and each option's figure are files the draw subagent wrote; the question
+// is on screen before they exist, so a figure with only {drawing:true} shows a placeholder and
+// the real one replaces it when the agent patches the file in. A figure frame cannot be measured
+// from outside (no same-origin access), so it posts its own height; see figure-brief.md.
+const FIG_FILE = /^figures\/([A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:html|svg))$/;
+const FIG_MIN = 120, FIG_MAX = 640, FIG_DEFAULT = 260;
+const figHeights = {};
+const figSrc = (f) => { const m = f && typeof f.file === "string" && FIG_FILE.exec(f.file); return m ? `/figure/${m[1]}?v=${encodeURIComponent(f.at || "")}` : ""; };
+function figureBody(f, key, label) {
+  if (!f) return "";
+  const src = figSrc(f);
+  if (!src) return f.drawing ? `<div class="fig-wait" role="status"><span class="spin"></span>Drawing the figure…</div>` : "";
+  const h = figHeights[key + src] || FIG_DEFAULT;
+  return `<div class="fig-frame"><iframe sandbox="allow-scripts" loading="lazy" data-fig="${esc(key + src)}" title="${esc(label)}" src="${esc(src)}" style="height:${h}px"></iframe></div>`;
+}
+const figOpenBtn = (f, label) => (figSrc(f) ? `<button type="button" class="fig-open" data-src="${esc(figSrc(f))}" data-label="${esc(label)}">Open larger</button>` : "");
+function figuresFor(q, rec, answerOpt) {
+  const qf = q.figure ? `<figure class="fig fig-q"><figcaption><span class="alt">${esc(q.figure.alt || "Figure")}</span>${figOpenBtn(q.figure, q.figure.alt || q.title)}</figcaption>${figureBody(q.figure, q.id + ":q", q.figure.alt || q.title)}</figure>` : "";
+  const withFig = (q.options || []).filter((o) => o.figure);
+  const of = withFig.length ? `<div class="figs">${withFig.map((o) => {
+    const label = `Option ${o.k}${o.figure.alt ? ": " + o.figure.alt : ""}`;
+    return `<figure class="fig${rec.option === o.k ? " rec" : ""}${answerOpt === o.k ? " chosen" : ""}"><figcaption><span class="k">${esc(o.k)}</span>${rec.option === o.k ? `<span class="tag">Recommended</span>` : ""}<span class="alt">${esc(o.figure.alt || "")}</span>${figOpenBtn(o.figure, label)}</figcaption>${figureBody(o.figure, q.id + ":" + o.k, label)}</figure>`;
+  }).join("")}</div>` : "";
+  return { qf, of, any: !!(qf || of) };
+}
+window.addEventListener("message", (e) => {
+  const d = e.data; if (!d || typeof d.grillFigureHeight !== "number" || !Number.isFinite(d.grillFigureHeight)) return;
+  const frame = [...document.querySelectorAll("iframe[data-fig]")].find((f) => f.contentWindow === e.source);
+  if (!frame) return;
+  const h = Math.min(FIG_MAX, Math.max(FIG_MIN, Math.ceil(d.grillFigureHeight)));
+  figHeights[frame.dataset.fig] = h; frame.style.height = h + "px";
+});
+function openFigure(src, label) {
+  const dlg = $("fig-dialog"); if (!dlg || typeof dlg.showModal !== "function") { window.open(src, "_blank", "noopener"); return; }
+  $("fig-dialog-title").textContent = label || "Figure"; $("fig-dialog-frame").setAttribute("src", src); dlg.showModal();
+}
+$("fig-dialog-close").onclick = () => $("fig-dialog").close();
+$("fig-dialog").addEventListener("close", () => $("fig-dialog-frame").removeAttribute("src"));
+$("fig-dialog").addEventListener("click", (e) => { if (e.target === $("fig-dialog")) $("fig-dialog").close(); });
+
 function renderMain() {
   const main = $("main"); const q = byId(selected);
   if (!q) { main.innerHTML = `<p class="empty">${S && qs().length ? "Pick a question on the left." : "No questions yet."}</p>`; return; }
@@ -545,13 +606,17 @@ function renderMain() {
   const exploreBtn = (q.options || []).length && !lk
     ? `<button id="explore" type="button"${exploring || gate.disabled ? " disabled" : ""}${gate.disabled && gate.why ? ` title="${esc(gate.why)}"` : ""}>${exploring ? `<span class="spin"></span> Exploring…` : q.explore ? "Explore again" : "Explore deeper"}</button>` : "";
   const picked = (q.status === "answered" && q.answer) || !!s.answer || !!pendAnswer;
-  main.innerHTML = `<article class="card${lk ? " locked" : ""}${picked ? " picked" : ""}">
+  const fg = figuresFor(q, rec, q.status === "answered" && q.answer ? q.answer.option : "");
+  main.innerHTML = `<article class="card${lk ? " locked" : ""}${picked ? " picked" : ""}${fg.any ? " has-figs" : ""}">
       <div class="crumb">${crumb.join("")}</div>
       <div class="title-row"><h2>${esc(q.title)}</h2>${exploreBtn}</div>
       <p class="body">${esc(q.body)}</p>
+      ${fg.qf}
       ${opts ? `<ul class="opts">${opts}</ul>` : ""}
+      ${fg.of}
       ${why}${stagedLine}${controls}
     </article>`;
+  main.querySelectorAll(".fig-open").forEach((b) => (b.onclick = () => openFigure(b.dataset.src, b.dataset.label)));
   main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { selected = a.dataset.go; render(); } }));
   if (lk) return;
   main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = () => stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt })));

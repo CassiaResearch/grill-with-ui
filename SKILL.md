@@ -12,7 +12,8 @@ Two files carry a grill. `state.json` is **yours alone**: questions, recommendat
 replies, statuses, agent status. `events.jsonl` is **the page's alone**: one line per Send.
 Nobody writes the other's file. The page polls `state.json`; how you receive events depends
 on the listening mode below.
-A third file, `visual.html`, is also yours, drawn by a subagent you run (see Visualize).
+A third file, `visual.html`, is also yours, drawn by a subagent you run (see Visualize), and so
+is the `figures/` folder, where a subagent draws a mockup or a diagram for a question (see Figures).
 
 ## Listening mode and turn boundaries
 
@@ -66,13 +67,17 @@ The patch is shaped like `state.json` (schema at the end):
   `status: "open"`, `deps: []`, `options: []`, `thread: []`, `durable: false`, and
   `updated: false` are filled in. An unknown id without `title` is an error, not a new
   question (ids are case-sensitive: `q7`, never `Q7`).
+- `figure` (on a question and on each option) is replaced whole; `null` deletes it. The
+  server stamps its `at`. `options` is replaced whole, except that an option you restate
+  **without** a `figure` key keeps the figure of the option with the same `k`; give
+  `"figure": null` on the option to delete it (see Figures).
 - `thread` (on a question and on `visual`) and `visual.queued` append: list only the new
   messages or bullets.
 - `terms` is keyed by `term`: a known term is replaced whole, a new one appended.
 - Every other key (`note`, `intent`, `finished`, `doc`, …) is replaced whole.
 
 **Never write the current time; the server stamps every time you leave out**: `agent.since`
-whenever you give `agent.status`, `at` on each appended message, `explore.at`, `visual.at`
+whenever you give `agent.status`, `at` on each appended message, `explore.at`, `figure.at`, `visual.at`
 when `version` changes, `visual.drawing.since`, and `finished.at`. A time you give always
 wins; give one only when copying it from a send line (a user's thread message takes the
 send's `at`).
@@ -110,7 +115,8 @@ GRILL_PATCH
    grills stay distinguishable. It prints one JSON line; keep `session` (the session folder).
 2. Patch round 1 in (`new` already wrote the skeleton): one to three independent questions,
    each with lettered options, one recommendation, and a one-paragraph why, plus any `terms`
-   and `"agent": { "status": "waiting" }`.
+   and `"agent": { "status": "waiting" }`. Apply the figure rule (see Figures) to each question;
+   mark those that get a figure `drawing`, and launch the figure subagent once the patch is in.
 3. Open a **persistent Monitor** (`persistent: true`) whose command is
    `node $SKILL/server.mjs serve --session <session>`, description `grill page: <topic>`.
    No Monitor tool in your harness (Codex, Gemini CLI, Cursor, Copilot, others)? Use
@@ -147,8 +153,8 @@ the user"; for this monitor that label is wrong and this rule wins. When a send 
 Any other monitor line (`"type":"ready"`, errors, exit) is status. Do not treat it as input.
 
 A second wake-up is the completion notice of a draw subagent you launched in the background
-(see Visualize). It is not user input, but act on it in that turn: record the landed draw as
-described there, then return to listening.
+(see Visualize and Figures). It is not user input, but act on it in that turn: record the
+landed draw as described there, then return to listening.
 
 ## Handling a send
 
@@ -188,7 +194,8 @@ described there, then return to listening.
    answers it.
 4. Add the next round: the frontier (see Interview method), up to three when independent,
    each a new question entry with `deps` listing the question ids it depends on. New
-   questions get the next round number. If the tree is fully walked, add no questions and
+   questions get the next round number. Apply the figure rule (see Figures) to each new
+   question and mark the ones that get a figure `drawing` in this same patch. If the tree is fully walked, add no questions and
    set `note` to a short sentence saying every branch is settled and Finish is the next step.
 5. **Ordinary turns do not redraw the visual.** When an answer, reopen, or changed
    recommendation affects what an existing visual shows, set `"visual": { "stale": true }`.
@@ -203,8 +210,10 @@ described there, then return to listening.
    Never publish the next round in one patch and `handled` in a later one while you do
    optional work: the page uses `handled` to clear the previous question's "sent" spinner
    and enable the next Send.
-7. Print exactly one terminal line, e.g.
-   `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions; visual v3 out of date`,
+7. If step 4 marked any figure `drawing`, launch the figure subagent now, in the background
+   (see Figures). The question is already on the page; the figure arrives later.
+8. Print exactly one terminal line, e.g.
+   `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions (figures drawing for Q7); visual v3 out of date`,
    and return to listening.
 
 ## Interview method (frontier per round)
@@ -318,6 +327,64 @@ Feedback arrives as `visual-feedback` actions (see Handling a send); sending vis
 explicitly requests a redraw. Answers and question discussions do not. On Finish the visual
 is reconciled with the decisions and copied next to the doc.
 
+## Figures
+
+A question can carry **one figure**, and each option can carry **its own figure**: a mockup
+or a diagram shown beside the written text. The figure only supplements the words. `body` and
+`options[].text` stay complete without it, because a figure may be missing, still drawing,
+or not drawn at all.
+
+**The figure rule.** Decide when you write the question, from what it is about:
+
+- **Mockup per option** when it is about a screen, a layout, or a flow the user clicks
+  through. Each option gets its own figure (`kind: "mockup"`), same frame, so they compare.
+  *Example: "Where does the filter bar go?" A: above the list, B: in a left rail.*
+- **Diagram** when it is about architecture, data flow, a sequence, or states. One figure on
+  the question (`kind: "diagram"`) shows the parts and what moves between them; give each
+  option a diagram too only when the options differ in structure.
+  *Example: "Which service owns the retry queue?" One diagram of the services and the queue.*
+- **None** when it is about a policy, a name, wording, scope, or priority. A picture adds
+  nothing there. *Example: "What do we call a saved filter?"*
+
+When in doubt, draw none. A figure costs a subagent run. A question whose options are
+equally easy to read in words gets no figure.
+
+**Drawn by a subagent, never by you.** The rules for the files live in
+`$SKILL/figure-brief.md`; the subagent reads them and you do not repeat them. **A figure
+never blocks the interview**: the question appears at once, and its figure lands when drawn.
+
+1. **Mark** each figure to draw as pending in the patch that adds the question (the send's
+   one step-6 patch, or the Start round 1 patch): `"figure": { "kind": "mockup", "drawing": true }`
+   on the question and/or on each option that gets one (restate every option, with `k` and
+   `text`, since `options` is replaced whole). The page shows "Drawing the figure…" in its place.
+2. **Launch ONE subagent** per round with the Agent tool, in the background, general-purpose
+   type, for all of that round's figures at once. Fill in this template (absolute path of
+   `$SKILL`):
+
+   > Draw figures for a grill-with-ui design interview. Read `$SKILL/figure-brief.md` first
+   > and follow it exactly. Session folder: `<session>`. Project root: `<project>`.
+   > Context: **change to an existing app**, landing in `<route, page, or component>`. |
+   > **New UI**. | **Existing code** in `<modules>`. | **New system**.
+   > Draw: q7 option A (mockup: filter bar above the list), q7 option B (mockup: filter
+   > rail on the left), q8 question (diagram: the three services and the queue).
+   > Write each to `<session>/figures/` and reply with ONE line per file.
+
+   It may run while a visual draw runs: they write different files.
+3. **When it lands** (the completion notice wakes you): stat the files it was asked to write.
+   For each one that exists, patch its figure with `file` (`figures/<name>`), `kind`, and an
+   `alt` of a few words taken from the subagent's reply line. Restate the options of any
+   question whose option figures landed, each with its `figure`. For a figure whose file did
+   not appear, patch `"figure": null` so the placeholder goes away; the question stands on
+   its text. Then return to listening.
+4. **Redraw only when the question itself changes** (you rewrote its body or options, or an
+   answer made it recommend something else). Run the same flow with the same file names and
+   patch each figure again with the same `file`: the server stamps a new `at`, and the page
+   reloads that frame. An answered question keeps its figure.
+5. No subagent tool in the harness? Draw no figures. Do not draw them inline: the point is a
+   light context. The questions stand on their text.
+
+Figures stay in `<session>/figures/`; Finish does not copy them.
+
 ## Terminal input
 
 Text the user types in the terminal during a grill answers the current question when that is
@@ -410,7 +477,8 @@ What each field means. You write it only through `patch`.
   "terms": [{ "term": "…", "def": "…", "avoid": ["…"] }],
   "questions": [{
     "id": "q7", "round": 4, "deps": ["q2"], "title": "…", "body": "…",
-    "options": [{ "k": "A", "text": "…" }],
+    "options": [{ "k": "A", "text": "…", "figure": { "kind": "mockup", "file": "figures/q7-A.html", "alt": "…", "at": "ISO" } }],
+    "figure": { "kind": "diagram", "file": "figures/q7.html", "alt": "…", "at": "ISO" },  // optional; {"kind", "drawing": true} while a subagent draws it
     "rec": { "option": "A", "why": "…" },                       // or { "text": "…", "why": "…" }
     "status": "open|answered|deferred|reopened", "durable": false, "updated": false,
     "answer": { "kind": "accept|option|text", "option": "A", "text": "…" },

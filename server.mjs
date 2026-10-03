@@ -165,6 +165,17 @@ function cmdServe(o) {
       if (!fs.existsSync(visual)) return json(res, 404, { error: "no visual" });
       return send(res, 200, fs.readFileSync(visual), "text/html; charset=utf-8");
     }
+    if (req.method === "GET" && pathname.startsWith("/figure/")) {
+      // Figures are drawn by a subagent into <session>/figures/ and shown by the page in sandboxed
+      // iframes. Only a plain file name is served, never a path; the CSP sandbox keeps a figure
+      // opened on its own (a new tab) as powerless as the iframe: no same-origin access to /send.
+      let name = "";
+      try { name = decodeURIComponent(pathname.slice("/figure/".length)); } catch { /* falls through to 404 */ }
+      const file = path.join(session, "figures", name);
+      if (!FIGURE_NAME.test(name) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return json(res, 404, { error: "no figure" });
+      res.writeHead(200, { "content-type": name.endsWith(".svg") ? "image/svg+xml" : "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "sandbox allow-scripts", "x-content-type-options": "nosniff" });
+      return res.end(fs.readFileSync(file));
+    }
     if (req.method === "POST" && pathname === "/send") {
       // Browsers set Origin on every POST, same-origin or not; reject a mismatch so another
       // tab (or the sandboxed visual iframe, whose Origin is "null") can't forge a send. No
@@ -266,6 +277,10 @@ const clean = (v) => (Array.isArray(v) ? v.map(clean)
   : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => [k, clean(x)])) : v);
 const newQuestionDefaults = () => ({ status: "open", deps: [], options: [], thread: [], durable: false, updated: false });
 const THREAD = ["thread"];
+// A figure is a file the draw subagent writes under <session>/figures/. Its name is one plain
+// segment, so /figure/<name> can never reach outside that folder.
+const FIGURE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(html|svg)$/;
+const FIGURE_KINDS = ["mockup", "diagram"];
 const VISUAL_APPENDS = ["thread", "queued"];
 
 // Agents do not reliably know the current time, so the server stamps every time the patch
@@ -289,6 +304,8 @@ function stampTimes(p, state, now) {
       if (!isObj(q)) return q;
       const s = { ...q };
       if (isObj(s.explore)) s.explore = fill(s.explore, "at");
+      if (isObj(s.figure) && s.figure.file != null) s.figure = fill(s.figure, "at");
+      if (Array.isArray(s.options)) s.options = s.options.map((o) => (isObj(o) && isObj(o.figure) && o.figure.file != null ? { ...o, figure: fill(o.figure, "at") } : o));
       if ("thread" in s) s.thread = messages(s.thread);
       return s;
     });
@@ -320,6 +337,20 @@ function mergeOne(current, p, where, appends = []) {
   }
   return out;
 }
+// `options` is replaced whole, but a figure is drawn once and costs a subagent run: an option
+// the patch restates without a figure keeps the figure of the option with the same k. Giving
+// "figure": null on the option deletes it; clean() drops that null from the merged value, so
+// the raw patch is the only place that still says so.
+function keepFigures(before, after, raw) {
+  if (!Array.isArray(before.options) || !Array.isArray(after.options) || !Array.isArray(raw.options)) return after;
+  const old = new Map(before.options.filter(isObj).map((o) => [o.k, o]));
+  after.options = after.options.map((o, i) => {
+    const r = raw.options[i];
+    const had = isObj(o) && isObj(old.get(o.k)) ? old.get(o.k).figure : undefined;
+    return had && isObj(r) && !("figure" in r) ? { ...o, figure: had } : o;
+  });
+  return after;
+}
 function patchQuestions(current, list) {
   if (!Array.isArray(list)) bad("questions in a patch must be an array of entries, each with an id");
   if (!Array.isArray(current)) bad("questions in state.json is not an array");
@@ -327,7 +358,7 @@ function patchQuestions(current, list) {
   for (const p of list) {
     if (!isObj(p) || typeof p.id !== "string" || !p.id) bad("every question entry in a patch needs a string id");
     const i = qs.findIndex((q) => isObj(q) && q.id === p.id);
-    if (i >= 0) { qs[i] = mergeOne(qs[i], p, p.id, THREAD); continue; }
+    if (i >= 0) { qs[i] = keepFigures(qs[i], mergeOne(qs[i], p, p.id, THREAD), p); continue; }
     if (p.title == null) {
       const ids = qs.map((q) => q && q.id).join(", ") || "none yet";
       bad(`no question ${JSON.stringify(p.id)} in state.json (ids: ${ids}); a new question needs round, title, and rec`);
@@ -434,6 +465,16 @@ function validateState(s) {
         for (const k of ["pros", "cons"]) check(r, k, strs, `${where}.${k} must be an array of strings`);
       });
     }
+    const figure = (f, where) => {
+      need(isObj(f), `${where} must be {"file":"figures/x.html","alt":"…"} or {"drawing":true}`);
+      check(f, "kind", (x) => FIGURE_KINDS.includes(x), `${where}.kind must be one of ${FIGURE_KINDS.join("|")}`);
+      texts(f, ["alt", "at"], where);
+      check(f, "drawing", bool, `${where}.drawing must be true or false`);
+      if ("file" in f) need(str(f.file) && f.file.startsWith("figures/") && FIGURE_NAME.test(f.file.slice("figures/".length)), `${where}.file must be figures/<name>.html or .svg, one plain file name`);
+      else need(f.drawing === true, `${where} needs a file, or drawing:true while the subagent draws it`);
+    };
+    if ("figure" in q) figure(q.figure, `${w}.figure`);
+    (q.options || []).forEach((o) => { if ("figure" in o) figure(o.figure, `${w}.options[${o.k}].figure`); });
     for (const k of ["durable", "updated"]) check(q, k, bool, `${w}.${k} must be true or false`);
     if ("thread" in q) messages(q.thread, `${w}.thread`);
   });

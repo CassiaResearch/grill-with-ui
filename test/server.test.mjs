@@ -2,8 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -686,4 +686,78 @@ test("cli: an unknown subcommand prints usage and exits 2, including inherited n
     assert.equal(r.stdout, "", `${name} must print nothing on stdout`);
     assert.match(r.stderr, /^grill: usage: server\.mjs [^\n]+\n$/, `${name} must print one usage line`);
   }
+});
+
+// ---- figures: a question and each option may carry a figure drawn by a subagent ----
+const optsAB = [{ k: "A", text: "Alpha" }, { k: "B", text: "Beta" }];
+
+test("patch: a question figure and option figures are stamped, stored whole, and a pending {drawing:true} is allowed", () => {
+  const session = seeded({ questions: [qn("q1", 1, { options: optsAB })] });
+  const t1 = Date.now();
+  applied(session, { questions: [{ id: "q1", figure: { kind: "diagram", file: "figures/q1.html", alt: "Flow" },
+    options: [{ k: "A", text: "Alpha", figure: { kind: "mockup", file: "figures/q1-A.html", alt: "Alpha drawn" } }, { k: "B", text: "Beta", figure: { drawing: true } }] }] });
+  const q = stateOf(session).questions[0];
+  stampedBetween(q.figure.at, t1, Date.now(), "figure.at");
+  assert.equal(q.figure.file, "figures/q1.html");
+  stampedBetween(q.options[0].figure.at, t1, Date.now(), "option figure.at");
+  assert.deepEqual(q.options[1].figure, { drawing: true }, "a pending figure has no file and no time");
+  const given = "2026-09-02T00:00:00.000Z";
+  applied(session, { questions: [{ id: "q1", figure: { file: "figures/q1.html", at: given } }] });
+  assert.equal(stateOf(session).questions[0].figure.at, given, "an explicit time wins");
+});
+
+test("patch: restating options keeps each option's figure; \"figure\": null deletes one; a question figure of null deletes it", () => {
+  const session = seeded({ questions: [qn("q1", 1, { options: optsAB })] });
+  applied(session, { questions: [{ id: "q1", figure: { file: "figures/q1.html" },
+    options: [{ k: "A", text: "Alpha", figure: { file: "figures/q1-A.html" } }, { k: "B", text: "Beta", figure: { file: "figures/q1-B.html" } }] }] });
+  applied(session, { questions: [{ id: "q1", options: [{ k: "A", text: "Alpha, reworded" }, { k: "B", text: "Beta", figure: null }] }] });
+  let q = stateOf(session).questions[0];
+  assert.equal(q.options[0].text, "Alpha, reworded");
+  assert.equal(q.options[0].figure.file, "figures/q1-A.html", "restated without a figure: kept");
+  assert.equal("figure" in q.options[1], false, "figure null: deleted");
+  assert.equal(q.figure.file, "figures/q1.html", "question figure untouched by an options patch");
+  applied(session, { questions: [{ id: "q1", figure: null }] });
+  q = stateOf(session).questions[0];
+  assert.equal("figure" in q, false);
+});
+
+test("patch: a figure must name one plain file under figures/ (no path, no other type) or be pending", () => {
+  const session = seeded({ questions: [qn("q1", 1, { options: optsAB })] });
+  for (const file of ["../state.json", "figures/../state.json", "figures/a/b.html", "/etc/passwd", "figures/x.js", "x.html", "figures/.html", "figures/a b.html", 7]) {
+    rejected(session, { questions: [{ id: "q1", figure: { file } }] }, /figure\.file must be figures\/<name>/);
+  }
+  rejected(session, { questions: [{ id: "q1", figure: {} }] }, /needs a file, or drawing:true/);
+  rejected(session, { questions: [{ id: "q1", figure: "figures/q1.html" }] }, /q1\.figure must be/);
+  rejected(session, { questions: [{ id: "q1", figure: { file: "figures/q1.html", kind: "photo" } }] }, /kind must be one of mockup\|diagram/);
+  rejected(session, { questions: [{ id: "q1", options: [{ k: "A", text: "Alpha", figure: { alt: "x" } }] }] }, /options\[A\]\.figure needs a file/);
+  rejected(session, { questions: [{ id: "q1", figure: { file: "figures/q1.svg", alt: { toString: 1 } } }] }, /alt must be a string/);
+  applied(session, { questions: [{ id: "q1", figure: { file: "figures/q1.svg", alt: "ok" } }] });
+});
+
+test("serve: /figure/<name> serves a file from the session's figures folder, sandboxed and no-store; nothing else", async (t) => {
+  const { session } = newSession(tmp("grill-fig-"));
+  const s = await startServe(session); t.after(s.stop);
+  mkdirSync(join(session, "figures"));
+  const html = "<!doctype html><title>f</title><p>fig</p>";
+  writeFileSync(join(session, "figures", "q1-A.html"), html);
+  writeFileSync(join(session, "figures", "d.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+  writeFileSync(join(session, "figures", "notes.txt"), "no");
+  writeFileSync(join(session, "secret.html"), "<p>secret</p>");
+  const hit = await fetch(s.ready.url + "figure/q1-A.html?v=1");
+  assert.equal(hit.status, 200);
+  assert.match(hit.headers.get("content-type"), /^text\/html/);
+  assert.equal(hit.headers.get("cache-control"), "no-store");
+  assert.equal(hit.headers.get("content-security-policy"), "sandbox allow-scripts");
+  assert.equal(hit.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(await hit.text(), html);
+  assert.equal((await fetch(s.ready.url + "figure/d.svg")).headers.get("content-type"), "image/svg+xml");
+  for (const bad of ["missing.html", "notes.txt", "..%2Fsecret.html", "%2e%2e%2fsecret.html", "q1-A.html%00", "%E0%A4%A"]) {
+    const r = await fetch(s.ready.url + "figure/" + bad);
+    assert.equal(r.status, 404, `${bad} must be 404`);
+  }
+  const raw = await new Promise((res) => { // a client that does not normalise the path
+    const c = createConnection(Number(new URL(s.ready.url).port), "127.0.0.1", () => c.write("GET /figure/../secret.html HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+    let b = ""; c.on("data", (d) => { b += d; }); c.on("end", () => res(b));
+  });
+  assert.match(raw, /^HTTP\/1\.1 404/);
 });
