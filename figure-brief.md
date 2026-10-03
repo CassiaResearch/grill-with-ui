@@ -101,6 +101,10 @@ boxes with the words from `terms`. Mark what is new or changing and what already
 (a solid outline for existing, a dashed outline for new), and add a one-line legend when you
 use more than one line style.
 
+Draw an SVG at a fixed `viewBox` of about 600 wide, with `width: 100%; max-width: 640px; height: auto`
+and label text of 12 to 14 viewBox units, so a diagram never grows to fill a wide frame with
+giant text. Keep edge labels clear of the boxes and of each other.
+
 At more than about twelve nodes hand layout stops working. Then you may embed Mermaid from
 `https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js` with `mermaid.initialize({ startOnLoad: true, theme: "neutral" })`, and
 put a one-line note in the file's comment that it needs network. Prefer fewer nodes: if the
