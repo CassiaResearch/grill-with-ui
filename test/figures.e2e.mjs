@@ -100,6 +100,18 @@ try {
   // none
   await select("q3");
   check("q3: a wording question has no figure and no placeholder", (await page.locator(".fig, .fig-wait").count()) === 0 && !(await page.locator("article.card").getAttribute("class")).includes("has-figs"));
+  // a layout question asked with no figure stays bare until Explore deeper marks one
+  patch({ questions: [{ id: "q4", round: 2, title: "Where does the sort control go?", body: "Layout of the list page.", options: [{ k: "A", text: "In the header" }, { k: "B", text: "Beside each column" }], rec: { option: "A", why: "One place." } }] });
+  await select("q4");
+  check("q4: a layout question asked with no figure shows no figure and no placeholder", (await page.locator(".fig, .fig-wait").count()) === 0);
+  patch({ questions: [{ id: "q4", explore: { rows: [{ option: "A", pros: ["One place", "Fewer clicks"], cons: ["Far from the data"] }, { option: "B", pros: ["Near the data", "Clear"], cons: ["Repeats", "Noisy"] }] }, options: [{ k: "A", text: "In the header", figure: { kind: "mockup", drawing: true } }, { k: "B", text: "Beside each column", figure: { kind: "mockup", drawing: true } }] }] });
+  await page.locator(".fig-wait").first().waitFor();
+  check("q4: explore marks a figure per option and the page shows a placeholder for each", (await page.locator(".fig-wait").count()) === 2);
+  writeFileSync(join(session, "figures", "q4-A.html"), figure("Sort in header", 300));
+  writeFileSync(join(session, "figures", "q4-B.html"), figure("Sort per column", 300));
+  patch({ questions: [{ id: "q4", options: [{ k: "A", text: "In the header", figure: { kind: "mockup", file: "figures/q4-A.html", alt: "sort in header" } }, { k: "B", text: "Beside each column", figure: { kind: "mockup", file: "figures/q4-B.html", alt: "sort per column" } }] }] });
+  await page.locator(".fig-frame iframe").nth(1).waitFor();
+  check("q4: both figures replace their placeholders without a reload", (await page.locator(".fig-frame iframe").count()) === 2 && (await page.locator(".fig-wait").count()) === 0);
   // theme
   await select("q1");
   await page.locator(".fig-frame iframe").first().waitFor();

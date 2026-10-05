@@ -115,8 +115,8 @@ GRILL_PATCH
    grills stay distinguishable. It prints one JSON line; keep `session` (the session folder).
 2. Patch round 1 in (`new` already wrote the skeleton): one to three independent questions,
    each with lettered options, one recommendation, and a one-paragraph why, plus any `terms`
-   and `"agent": { "status": "waiting" }`. Apply the figure rule (see Figures) to each question;
-   mark those that get a figure `drawing`, and launch the figure subagent once the patch is in.
+   and `"agent": { "status": "waiting" }`. Give no `figure` and launch no figure subagent: figures
+   are drawn on `explore` only (see Figures).
 3. Open a **persistent Monitor** (`persistent: true`) whose command is
    `node $SKILL/server.mjs serve --session <session>`, description `grill page: <topic>`.
    No Monitor tool in your harness (Codex, Gemini CLI, Cursor, Copilot, others)? Use
@@ -176,6 +176,8 @@ landed draw as described there, then return to listening.
      question's discussion panel. If writing it changes your mind, set a new `rec` and
      `updated: true`. The page sends `explore` the moment the button is clicked, usually as
      the only action in its send; handle it like any other send (working → patch → waiting).
+     Then apply the figure rule (see Figures) to this question. If it gets a figure, mark it
+     `drawing` in the same patch, and launch the figure subagent after the patch (step 7).
    - `visualize` → see Visualize below: launch the draw subagent in the background and mark
      `visual.drawing`; the send counts as handled the moment the brief is out. The page
      sends it the moment the button (or Regenerate) is clicked, usually alone.
@@ -194,8 +196,7 @@ landed draw as described there, then return to listening.
    answers it.
 4. Add the next round: the frontier (see Interview method), up to three when independent,
    each a new question entry with `deps` listing the question ids it depends on. New
-   questions get the next round number. Apply the figure rule (see Figures) to each new
-   question and mark the ones that get a figure `drawing` in this same patch. If the tree is fully walked, add no questions and
+   questions get the next round number and no `figure`. If the tree is fully walked, add no questions and
    set `note` to a short sentence saying every branch is settled and Finish is the next step.
 5. **Ordinary turns do not redraw the visual.** When an answer, reopen, or changed
    recommendation affects what an existing visual shows, set `"visual": { "stale": true }`.
@@ -210,10 +211,11 @@ landed draw as described there, then return to listening.
    Never publish the next round in one patch and `handled` in a later one while you do
    optional work: the page uses `handled` to clear the previous question's "sent" spinner
    and enable the next Send.
-7. If step 4 marked any figure `drawing`, launch the figure subagent now, in the background
-   (see Figures). The question is already on the page; the figure arrives later.
+7. If an `explore` action in step 2 marked any figure `drawing`, launch the figure subagent
+   now, in the background (see Figures). The table is already on the page; the figure arrives
+   later.
 8. Print exactly one terminal line, e.g.
-   `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions (figures drawing for Q7); visual v3 out of date`,
+   `grill: handled send #3 (Q2 → B, Q4 thread); Q7 explored (figures drawing); round 4 has 2 questions; visual v3 out of date`,
    and return to listening.
 
 ## Interview method (frontier per round)
@@ -330,11 +332,13 @@ is reconciled with the decisions and copied next to the doc.
 ## Figures
 
 A question can carry **one figure**, and each option can carry **its own figure**: a mockup
-or a diagram shown beside the written text. The figure only supplements the words. `body` and
-`options[].text` stay complete without it, because a figure may be missing, still drawing,
-or not drawn at all.
+or a diagram shown beside the written text. **Figures are drawn on request only**: a drawing
+costs a subagent run with a browser, so a question carries no figure until the user clicks
+**Explore deeper** on it. The figure only supplements the words. `body` and `options[].text`
+stay complete without it, because a figure may be missing, still drawing, or never asked for.
 
-**The figure rule.** Decide when you write the question, from what it is about:
+**The figure rule.** It runs in the `explore` handler (Handling a send), never when you write
+a question. Decide from what the question is about:
 
 - **Mockup per option** when it is about a screen, a layout, or a flow the user clicks
   through. Each option gets its own figure (`kind: "mockup"`), same frame, so they compare.
@@ -344,21 +348,22 @@ or not drawn at all.
   option a diagram too only when the options differ in structure.
   *Example: "Which service owns the retry queue?" One diagram of the services and the queue.*
 - **None** when it is about a policy, a name, wording, scope, or priority. A picture adds
-  nothing there. *Example: "What do we call a saved filter?"*
+  nothing there. *Example: "What do we call a saved filter?"* The pros/cons table alone
+  answers `explore`.
 
-When in doubt, draw none. A figure costs a subagent run. A question whose options are
-equally easy to read in words gets no figure.
+When in doubt, draw none. A question that already has a figure keeps it on a second
+`explore`.
 
 **Drawn by a subagent, never by you.** The rules for the files live in
 `$SKILL/figure-brief.md`; the subagent reads them and you do not repeat them. **A figure
-never blocks the interview**: the question appears at once, and its figure lands when drawn.
+never blocks the interview**: the pros/cons table appears at once, and the figure lands when drawn.
 
-1. **Mark** each figure to draw as pending in the patch that adds the question (the send's
-   one step-6 patch, or the Start round 1 patch): `"figure": { "kind": "mockup", "drawing": true }`
+1. **Mark** each figure to draw as pending in the patch that carries the `explore` table (the
+   send's one step-6 patch): `"figure": { "kind": "mockup", "drawing": true }`
    on the question and/or on each option that gets one (restate every option, with `k` and
    `text`, since `options` is replaced whole). The page shows "Drawing the figure…" in its place.
-2. **Launch ONE subagent** per round with the Agent tool, in the background, general-purpose
-   type, for all of that round's figures at once. Fill in this template (absolute path of
+2. **Launch ONE subagent** per send with the Agent tool, in the background, general-purpose
+   type, for all of that send's figures at once. Fill in this template (absolute path of
    `$SKILL`):
 
    > Draw figures for a grill-with-ui design interview. Read `$SKILL/figure-brief.md` first
