@@ -106,12 +106,13 @@ reconciles and copies the final visual next to the design doc as
 
 ### Figures on questions
 
-Where a picture helps, a question carries a **figure** and each option carries its own, shown
-under the written options and side by side so the options compare. The written text is always
-complete without them. The rule: a question about a screen, a layout, or a flow you click
+A question carries no figure when it is asked, because a drawing costs a subagent run. Click
+**Explore deeper** and the agent adds the pros/cons table and, where a picture helps, a
+**figure** on the question and one on each option, shown under the written options and side
+by side so the options compare. The written text is always complete without them. The rule: a question about a screen, a layout, or a flow you click
 through gets a **mockup per option**; one about architecture, data flow, a sequence, or states
 gets a **diagram**; one about policy, naming, or wording gets none. A figure never holds up the
-interview: the question shows at once with "Drawing the figure…", and a subagent (rules in
+interview: the table shows at once and the figure area reads "Drawing the figure…", and a subagent (rules in
 `figure-brief.md`) fills it in a moment later. Each figure sits in a sandboxed frame that
 follows your system theme and fits a phone width; **Open larger** shows it full size.
 
